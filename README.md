@@ -19,4 +19,7 @@ Scan a directory and print a list of triples.
 
 ### color-histogram.py
 Accept a list of triples (output of list-valid-triple.py) and a threshold value.
-Filter triples that potentially contains video shot boundary.
+Filter out triples that potentially contains video shot boundary.
+
+### texture-entropy.py
+Filter out triples that has low texture entropy.
