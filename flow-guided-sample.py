@@ -22,25 +22,29 @@ data = [(name, float(flowmag))
 def inRange(a, lb, rb):
     return lb <= a and a < rb
 
-clipN = len(list(filter(lambda a: inRange(a[1], 4, 5), data)))
-
 bin1 = list(filter(lambda a: a[1] < 1, data))
+bin1 = list(filter(lambda a: a[1] >= 0.1, bin1))
 bin2 = list(filter(lambda a: inRange(a[1], 1, 2), data))
 bin3 = list(filter(lambda a: inRange(a[1], 2, 3), data))
 bin4 = list(filter(lambda a: inRange(a[1], 3, 4), data))
-res = list(filter(lambda a: a[1] >= 4, data))
+bin5 = list(filter(lambda a: inRange(a[1], 4, 5), data))
+res = list(filter(lambda a: a[1] >= 5, data))
+
+clipN = len(list(filter(lambda a: inRange(a[1], 5, 6), data)))
 
 np.random.shuffle(bin1)
 np.random.shuffle(bin2)
 np.random.shuffle(bin3)
 np.random.shuffle(bin4)
+np.random.shuffle(bin5)
 
 bin1 = bin1[:clipN]
 bin2 = bin2[:clipN]
 bin3 = bin3[:clipN]
 bin4 = bin4[:clipN]
+bin5 = bin5[:clipN]
 
-newdata = bin1 + bin2 + bin3 + bin4 + res
+newdata = bin1 + bin2 + bin3 + bin4 + bin5 + res
 newdata.sort(key=lambda a: a[1])
 
 for name, flow in newdata:

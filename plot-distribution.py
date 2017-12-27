@@ -22,6 +22,7 @@ lbound = int(math.ceil(max(data)))
 plt.hist(data, bins=np.arange(lbound, step=0.1), weights=np.ones(len(data)) / float(len(data)) * 100)
 
 plt.xlim(xmin=0, xmax=15)
+plt.xticks([0, 5, 10, 15])
 plt.title('Flow magnitude distribution')
 plt.xlabel('Mean pixel flow magnitude')
 plt.ylabel('Percentage')
