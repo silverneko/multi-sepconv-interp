@@ -21,5 +21,19 @@ Scan a directory and print a list of triples.
 Accept a list of triples (output of list-valid-triple.py) and a threshold value.
 Filter out triples that potentially contains video shot boundary.
 
+http://www-nlpir.nist.gov/projects/tvpubs/tvpapers03/ramonlull.paper.pdf
+
 ### texture-entropy.py
 Filter out triples that has low texture entropy.
+
+http://scikit-image.org/docs/dev/auto_examples/filters/plot_entropy.html
+
+### flow-estimate.py
+Estimate flow magnitude between first and third frame for each data.
+
+### flow-guided-sample.py
+Flow-guided heuristically sample data.
+
+### plot-distribution.py
+Plot histogram of distribution of data from the result of `flow-estimate.py` and
+ `flow-guided-sample.py`.

@@ -1,0 +1,3 @@
+[submodule "pyflow"]
+	path = pyflow
+	url = git@github.com:silverneko/pyflow.git
