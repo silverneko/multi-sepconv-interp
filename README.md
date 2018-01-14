@@ -13,7 +13,7 @@ Video frame interpolation using multiple separable convolution
 - [KITTI Scene Flow 2015](http://www.cvlibs.net/datasets/kitti/eval_scene_flow.php)
 
 UCF dataset's quality is too low and contains watermark so not suitable.
-KITTI's images are stretched / wrapped so not suitable.
+KITTI's images are stretched / warpped so not suitable.
 
 So my data are only sampled youtube videos.
 
