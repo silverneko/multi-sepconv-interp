@@ -93,7 +93,6 @@ def main():
 
     if args.first:
         res = eval(model, args.first, args.second)
-        res = res[]
         skimage.io.imsave(args.output, res)
         return
 
