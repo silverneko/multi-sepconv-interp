@@ -6,9 +6,9 @@ import progressbar
 import skimage.io
 import skimage.util
 import torch
-import torch.nn
-import torch.optim
 import torch.utils.data
+from Sepconv import Sepconv
+from Sepconv2 import Sepconv2
 
 parser = argparse.ArgumentParser(
     description='train.py',
@@ -18,18 +18,22 @@ parser.add_argument('imagelist', metavar='LIST',
                     help='list of image pathnames')
 parser.add_argument('-j', default=4, type=int, metavar='N',
                     help='number of dataloading threads')
+parser.add_argument('--dim', default=1, type=int, metavar='D',
+                    help='model estimates filter of dimension D')
 parser.add_argument('--epoch', default=30, type=int, metavar='N',
                     help='number of epochs to train')
 parser.add_argument('--start-epoch', default=1, type=int, metavar='N',
                     help='start training from epoch N')
 parser.add_argument('-b', '--batch-size', default=32, type=int, metavar='B',
                     help='SGD mini-batch size (multiple of 4)')
-parser.add_argument('-lr', '--learning-rate', default=0.01, type=float,
+parser.add_argument('-lr', '--learning-rate', default=1e-3, type=float,
                     metavar='LR', help='learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='SGD momentum')
 parser.add_argument('--nesterov', action='store_true',
                     help='use nesterov momentum')
+parser.add_argument('--l2', default=0.0, type=float, metavar='L2',
+                    help='parameter for l2 regularization')
 parser.add_argument('-o', '--output-prefix', default='model-', type=str,
                     metavar='PREFIX',
                     help='pathname prefix of saved model')
@@ -37,8 +41,19 @@ parser.add_argument('--print-freq', default=10, type=int, metavar='FREQ',
                     help='print status every FREQ minibatch')
 parser.add_argument('--model', type=str, metavar='MODEL',
                     help='load model state')
+parser.add_argument('--load-optimizer', action='store_true',
+                    help='load optimizer state from MODEL')
+parser.add_argument('--sgd', action='store_true',
+                    help='use SGD')
 parser.add_argument('--adamax', action='store_true',
-                    help='use adamax instead of SGD')
+                    help='use adamax')
+parser.add_argument('--rmsprop', action='store_true',
+                    help='use rmsprop')
+parser.add_argument('--mse', action='store_true')
+parser.add_argument('--model-type', default='v1', type=str, metavar='TYPE',
+                    help='use model v1 or v2')
+
+subbatch_size = 4
 
 def main():
     global args
@@ -50,43 +65,60 @@ def main():
     dataset = TrainDataset(pathnames)
     data_loader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=4,
+        batch_size=subbatch_size,
         shuffle=True,
         num_workers=args.j,
         pin_memory=True
     )
 
-    model = Sepconv()
-    if args.model:
-        checkpoint = torch.load(args.model)
-        model.load_state_dict(checkpoint['model'])
+    if args.model_type == 'v1':
+        model = Sepconv(args.dim)
+    elif args.model_type == 'v2':
+        model = Sepconv2(args.dim, dh=64)
     model = model.cuda()
-    loss = torch.nn.L1Loss().cuda()
+
+    if args.mse:
+        loss = torch.nn.MSELoss().cuda()
+    else:
+        loss = torch.nn.L1Loss().cuda()
 
     if args.adamax:
         optimizer = torch.optim.Adamax(
             model.parameters(),
             lr=args.learning_rate,
-            weight_decay=1e-6
+            weight_decay=args.l2
         )
-    else:
+    elif args.rmsprop:
+        optimizer = torch.optim.RMSprop(
+            model.parameters(),
+            lr=args.learning_rate,
+            momentum=args.momentum,
+            weight_decay=args.l2
+        )
+    elif args.sgd:
         optimizer = torch.optim.SGD(
             model.parameters(),
             lr=args.learning_rate,
             momentum=args.momentum,
-            weight_decay=1e-6,
             dampening=0.0,
-            nesterov=args.nesterov
+            nesterov=args.nesterov,
+            weight_decay=args.l2
         )
 
-    for epoch in range(args.start_epoch, args.epoch+1):
+    if args.model:
+        checkpoint = torch.load(args.model)
+        model.load_state_dict(checkpoint['model'])
+        if args.load_optimizer:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+
+    for epoch in range(args.start_epoch, args.start_epoch + args.epoch):
         train_epoch(epoch, data_loader, model, loss, optimizer)
 
         filename = args.output_prefix + str(epoch).rjust(3, '0')
         save_model(epoch, model, optimizer, filename)
 
 def train_epoch(epoch, data_loader, model, loss, optimizer):
-    subbatch_count = (args.batch_size / 4)
+    subbatch_count = int(args.batch_size / subbatch_size)
     batch_count = int(np.ceil(len(data_loader) / subbatch_count))
     batch_i = 0
     train_loss = AverageMeter('Loss')
@@ -108,31 +140,35 @@ def train_epoch(epoch, data_loader, model, loss, optimizer):
         target_var = torch.autograd.Variable(ground_truth)
 
         output_var = model(input1_var, input2_var)
-        loss_var = loss(output_var, target_var)
+        #output_var = torch.clamp(output_var, min=0.0, max=1.0)
+        loss_var = loss(output_var[:,:,25:-25,25:-25], target_var[:,:,25:-25,25:-25])
+        loss_var = loss_var / subbatch_count
 
         if i % subbatch_count == 0:
             optimizer.zero_grad()
         #hacky, bacause gradient accum over subbatches, need to normalize it
         #loss_var.backward()
-        loss_var.backward(torch.cuda.FloatTensor([1 / subbatch_count]))
+        loss_var.backward()
         if (i+1) % subbatch_count == 0:
             optimizer.step()
 
-
-        subbatch_loss += loss_var.data[0]
+        subbatch_loss += loss_var.data[0] * input1.size(0) * subbatch_count
         subbatch_loss_n += input1.size(0)
         subbatch_time += time.time() - batch_time_end
         batch_time_end = time.time()
         if (i+1) % subbatch_count == 0:
             batch_i += 1
-            train_loss.update(subbatch_loss / subbatch_loss_n)
+            if args.mse:
+                train_loss.update(np.sqrt(subbatch_loss / subbatch_loss_n))
+            else:
+                train_loss.update(subbatch_loss / subbatch_loss_n)
             batch_time.update(subbatch_time)
             subbatch_loss = 0
             subbatch_loss_n = 0
             subbatch_time = 0
             if batch_i % args.print_freq == 0:
                 print (
-                    'Epoch: {epoch}({batch}/{batch_count}) | '
+                    'Epoch: {epoch} ({batch}/{batch_count}) | '
                     '{loss} | {time} | Elapse: {elapse:.2f}'
                     .format(
                         epoch=epoch,
@@ -158,142 +194,6 @@ def save_model(epoch, model, optimizer, filename):
         },
         filename
     )
-
-class Sepconv(torch.nn.Module):
-    def __init__(self):
-        super(Sepconv, self).__init__()
-
-        def TripleConv2d(inChannel, outChannel):
-            return torch.nn.Sequential(
-                torch.nn.Conv2d(in_channels=inChannel, out_channels=outChannel,
-                                kernel_size=3, stride=1, padding=1),
-                torch.nn.ReLU(),
-                torch.nn.Conv2d(in_channels=outChannel, out_channels=outChannel,
-                                kernel_size=3, stride=1, padding=1),
-                torch.nn.ReLU(),
-                torch.nn.Conv2d(in_channels=outChannel, out_channels=outChannel,
-                                kernel_size=3, stride=1, padding=1),
-                torch.nn.ReLU()
-            )
-
-        def UpsampleLayer(inChannel):
-            return torch.nn.Sequential(
-                torch.nn.Upsample(scale_factor=2, mode='bilinear'),
-                torch.nn.Conv2d(in_channels=inChannel, out_channels=inChannel,
-                                kernel_size=3, stride=1, padding=1),
-                torch.nn.ReLU()
-            )
-
-        def Subnet():
-            return torch.nn.Sequential(
-                torch.nn.Conv2d(in_channels=64, out_channels=64,
-                                kernel_size=3, stride=1, padding=1),
-                torch.nn.ReLU(),
-                torch.nn.Conv2d(in_channels=64, out_channels=64,
-                                kernel_size=3, stride=1, padding=1),
-                torch.nn.ReLU(),
-                torch.nn.Conv2d(in_channels=64, out_channels=51,
-                                kernel_size=3, stride=1, padding=1),
-                torch.nn.ReLU(),
-                torch.nn.Upsample(scale_factor=2, mode='bilinear'),
-                torch.nn.Conv2d(in_channels=51, out_channels=51,
-                                kernel_size=3, stride=1, padding=1),
-            )
-
-        self.Conv1 = TripleConv2d(6, 32)
-        self.Pool1 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-
-        self.Conv2 = TripleConv2d(32, 64)
-        self.Pool2 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-
-        self.Conv3 = TripleConv2d(64, 128)
-        self.Pool3 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-
-        self.Conv4 = TripleConv2d(128, 256)
-        self.Pool4 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-
-        self.Conv5 = TripleConv2d(256, 512)
-        self.Pool5 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-
-        self.Conv6 = TripleConv2d(512, 512)
-        self.Upsample6 = UpsampleLayer(512)
-
-        self.Conv7 = TripleConv2d(512, 256)
-        self.Upsample7 = UpsampleLayer(256)
-
-        self.Conv8 = TripleConv2d(256, 128)
-        self.Upsample8 = UpsampleLayer(128)
-
-        self.Conv9 = TripleConv2d(128, 64)
-        self.Upsample9 = UpsampleLayer(64)
-
-        self.Vertical1 = Subnet()
-        self.Horizontal1 = Subnet()
-        self.Vertical2 = Subnet()
-        self.Horizontal2 = Subnet()
-
-        pad_width = int((51 - 1) / 2)
-        self.PadInput = torch.nn.ReplicationPad2d([pad_width] * 4)
-
-    def forward(self, input1, input2):
-        Input = torch.cat([input1, input2], 1)
-
-        conv1 = self.Conv1(Input)
-        pool1 = self.Pool1(conv1)
-
-        conv2 = self.Conv2(pool1)
-        pool2 = self.Pool2(conv2)
-
-        conv3 = self.Conv3(pool2)
-        pool3 = self.Pool3(conv3)
-
-        conv4 = self.Conv4(pool3)
-        pool4 = self.Pool4(conv4)
-
-        conv5 = self.Conv5(pool4)
-        pool5 = self.Pool5(conv5)
-
-        conv6 = self.Conv6(pool5)
-        up6   = self.Upsample6(conv6)
-        comb6 = up6 + conv5
-
-        conv7 = self.Conv7(comb6)
-        up7   = self.Upsample7(conv7)
-        comb7 = up7 + conv4
-
-        conv8 = self.Conv8(comb7)
-        up8   = self.Upsample8(conv8)
-        comb8 = up8 + conv3
-
-        conv9 = self.Conv9(comb8)
-        up9   = self.Upsample9(conv9)
-        comb9 = up9 + conv2
-
-        k1v = self.Vertical1(comb9)
-        k1h = self.Horizontal1(comb9)
-        k2v = self.Vertical2(comb9)
-        k2h = self.Horizontal2(comb9)
-
-        padded1 = self.PadInput(input1)
-        padded2 = self.PadInput(input2)
-
-        Output = torch.zeros_like(input1)
-        [batch, channel, height, width] = list(Output.size())
-
-
-        for h in range(height):
-            P1 = padded1[:,:,h:h+51,:].unfold(3, 51, 1).permute(0, 1, 3, 2, 4)
-            P2 = padded2[:,:,h:h+51,:].unfold(3, 51, 1).permute(0, 1, 3, 2, 4)
-
-            K1v = k1v[:, :, h, :].permute(0, 2, 1).unsqueeze(1).unsqueeze(3)
-            K1h = k1h[:, :, h, :].permute(0, 2, 1).unsqueeze(1).unsqueeze(4)
-            K2v = k2v[:, :, h, :].permute(0, 2, 1).unsqueeze(1).unsqueeze(3)
-            K2h = k2h[:, :, h, :].permute(0, 2, 1).unsqueeze(1).unsqueeze(4)
-
-            I = (torch.matmul(K1v, torch.matmul(P1, K1h)) +
-                torch.matmul(K2v, torch.matmul(P2, K2h))).squeeze(4).squeeze(3)
-            Output[:,:,h] = torch.clamp(I, min=0.0, max=1.0)
-        return Output
 
 class TrainDataset(torch.utils.data.Dataset):
     """Trainging dataset"""
@@ -343,7 +243,7 @@ class TrainDataset(torch.utils.data.Dataset):
         return imgs
 
 class AverageMeter(object):
-    """Maintain a variable's current and average value"""
+    """Maintain a variable's current and average value (moving average)"""
 
     def __init__(self, name=None):
         self.reset(name)
@@ -354,6 +254,7 @@ class AverageMeter(object):
         self.avg = 0.0
         self.cum = 0.0
         self.n = 0.0
+        self.alpha = 0.05
 
     def __str__(self):
         if self.name is None:
@@ -364,8 +265,10 @@ class AverageMeter(object):
         self.val = val
         self.cum += val * n
         self.n += n
-        if self.n != 0:
-            self.avg = self.cum / self.n
+        if self.n == 1:
+            self.avg = val
+        else:
+            self.avg = self.alpha * val + (1 - self.alpha) * self.avg
 
 if __name__ == '__main__':
     main()
