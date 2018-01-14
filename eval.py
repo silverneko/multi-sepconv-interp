@@ -93,6 +93,7 @@ def main():
 
     if args.first:
         res = eval(model, args.first, args.second)
+        res = res[]
         skimage.io.imsave(args.output, res)
         return
 
@@ -100,7 +101,8 @@ def main():
         assert(x.shape == y.shape)
         return np.abs(x - y).mean()
 
-    dirs = """Army
+    dirs = """
+Army
 Backyard
 Basketball
 Dumptruck
@@ -110,11 +112,12 @@ Mequon
 Schefflera
 Urban
 Wooden
-Yosemite""".split()
+""".split()
     dirs = [os.path.join('eval-data', d) for d in dirs]
 
     L = []
     for d in dirs:
+        Ld = []
         for i in range(7, 13):
             tri = [os.path.join(d, 'frame{:02}.png'.format(t)) for t in range(i, i+3)]
             y = eval(model, tri[0], tri[2])
@@ -122,8 +125,11 @@ Yosemite""".split()
             ground_truth = skimage.util.img_as_float32(ground_truth)
             if len(ground_truth.shape) == 2:
                 y = y[:,:,0]
-            L.append(255 * loss(ground_truth, y))
-            print (L[-1])
+            Ld.append(loss(ground_truth, y))
+        L += Ld
+        print (d)
+        print (Ld)
+        print (sum(Ld) / len(Ld))
 
     print (sum(L) / len(L))
 
