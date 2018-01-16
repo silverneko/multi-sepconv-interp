@@ -7,8 +7,7 @@ import skimage.io
 import skimage.util
 import torch
 import torch.utils.data
-from Sepconv import Sepconv
-from Sepconv2 import Sepconv2
+from sepconv import *
 
 parser = argparse.ArgumentParser(
     description='train.py',
@@ -110,6 +109,15 @@ def main():
         model.load_state_dict(checkpoint['model'])
         if args.load_optimizer:
             optimizer.load_state_dict(checkpoint['optimizer'])
+
+    """
+    torch.save({
+        'model': model.state_dict(),
+        },
+        'model-v1-no-optimizer'
+    )
+    exit()
+    """
 
     for epoch in range(args.start_epoch, args.start_epoch + args.epoch):
         train_epoch(epoch, data_loader, model, loss, optimizer)

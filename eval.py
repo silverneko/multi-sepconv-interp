@@ -6,8 +6,7 @@ import progressbar
 import skimage.io
 import skimage.util
 import torch
-from Sepconv import Sepconv
-from Sepconv2 import Sepconv2
+from sepconv import *
 
 parser = argparse.ArgumentParser(
     description='eval.py',
